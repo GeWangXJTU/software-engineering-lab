@@ -1,3 +1,4 @@
+const platform='西安交通大学软小智课程平台';
 const roles=['产品经理','需求人员','设计人员','开发人员','测试人员'];
 const modules=[['产品规划','项目管理','产品评审与验收'],['需求获取与分析','需求建模与文档编制','需求变更与追踪'],['软件架构设计','软件详细设计','界面原型设计'],['开发任务管理','编码实现与代码管理','软件集成与缺陷修复'],['测试计划与用例设计','测试执行与结果分析','缺陷管理与质量评估']];
 const stages=['产品规划','需求分析','软件设计','编码实现','软件测试','产品验收'];
@@ -76,7 +77,7 @@ function openForm(title,body,callback,label='保存'){
 }
 function auth(mode='login'){
  authMode=mode;
- openForm(mode==='login'?'登录研工坊':'创建账号',input('name','用户名')+input('password','密码（至少 8 位）','','password')+(mode==='register'?select('teacher','账号类型',[[0,'学生'],[1,'教师']])+input('key','教师邀请码（学生留空）'):'')+'<button type="button" class="link" id="switch-auth">'+(mode==='login'?'还没有账号？创建账号':'已有账号？登录')+'</button>',async d=>{await api(mode,{...d,teacher:d.teacher==='1'});tid=0;page='项目概览';},mode==='login'?'登录':'注册');
+ openForm(mode==='login'?'登录平台':'创建账号',input('name','用户名')+input('password','密码（至少 8 位）','','password')+(mode==='register'?select('teacher','账号类型',[[0,'学生'],[1,'教师']])+input('key','教师邀请码（学生留空）'):'')+'<button type="button" class="link" id="switch-auth">'+(mode==='login'?'还没有账号？创建账号':'已有账号？登录')+'</button>',async d=>{await api(mode,{...d,teacher:d.teacher==='1'});tid=0;page='项目概览';},mode==='login'?'登录':'注册');
  dialog.querySelector('#switch-auth').onclick=()=>auth(mode==='login'?'register':'login');
 }
 const authOnly=fn=>demo()?auth():fn();
@@ -127,7 +128,7 @@ function report(rs,ms){
 }
 function section(t,rs,ms){
  if(page==='任务看板')return panel(page,'<div class="switch">'+['列表','看板','甘特图'].map(v=>button(v,'view:'+v,taskView===v?'chosen':'')).join('')+'</div>'+tasks(rs),[0,3].includes(role())?button('新建任务','new:task','primary','plus'):'');
- if(page==='小组与项目')return panel('项目与小组','<div class="projectlist">'+(live?.projects||[]).map(p=>'<div><b>'+E(p.title)+'</b><p>'+E(p.body)+'</p></div>').join('')+'</div>'+panel('小组成员',report(rs,ms),button('下载小组报告','report:0','link'))+'<p class="invite">小组邀请码 <b>'+E(t.code)+'</b></p>',live?.user?.teacher?button(t.archived?'恢复小组':'归档小组','archive','soft'):button('创建或加入小组','groups','primary','plus'));
+ if(page==='小组与项目')return panel('项目与小组','<div class="projectlist">'+(live?.projects||[]).map(p=>'<div><b>'+E(p.title)+'</b><p>'+E(p.body)+'</p></div>').join('')+'</div>'+panel('小组成员',report(rs,ms),button('下载小组报告','report:0','link'))+(live?.user?.admin?'':'<p class="invite">小组邀请码 <b>'+E(t.code)+'</b></p>'),live?.user?.teacher?button(t.archived?'恢复小组':'归档小组','archive','soft'):(live?.user?.admin?'':button('创建或加入小组','groups','primary','plus')));
  const m=page==='项目文档'?rs.filter(r=>r.kind!=='evaluation'):rs.filter(r=>r.module===page);
  const r=role(), own=modules[r]?.includes(page);
  const add=own?button('提交交付物','new:artifact','primary','plus')+
@@ -137,14 +138,18 @@ function section(t,rs,ms){
  const teststat=page===modules[4][1]?'<p class="invite">通过率 '+(cases.filter(x=>x.status!=='未执行').length?Math.round(100*cases.filter(x=>x.status==='通过').length/cases.filter(x=>x.status!=='未执行').length)+'%':'—')+'　需求覆盖率 '+(req.length?Math.round(100*req.filter(x=>covered.has(x.id)).length/req.length)+'%':'—')+'</p>':'';
  return panel(page,teststat+(m.length?m.map(x=>'<button class="taskrow" data-action="detail:'+x.id+'"><span class="taskicon">'+I('file')+'</span><span class="grow"><b>'+E(x.title)+'</b><small>'+E(kinds[x.kind])+' · #'+x.id+'</small></span>'+pill(x.status)+'</button>').join(''):'<div class="empty">暂无记录</div>'),add);
 }
+function adminOverview(teams){
+ const list=teams.map(t=>'<button class="taskrow adminrow" data-action="team:'+t.id+'"><div class="grow"><b>'+E(t.name)+'</b><small>'+E(t.title)+'</small></div><div><b>'+E(stages[t.stage]||'已完成')+'</b><small>阶段 '+t.stage+' / 6'+(t.archived?' · 已归档':'')+'</small></div><div><b>'+t.completed_tasks+' / '+t.task_count+' 项任务</b><small>'+t.member_count+' 位成员 · '+t.artifact_count+' 项交付物</small></div>'+I('arrow',16)+'</button>').join('');
+ return '<div class="pageintro"><h1>全部小组进展</h1><p>管理员 · 王鸽</p></div>'+panel('课程实践小组',list||'<div class="empty">暂无实践小组</div>','',teams.length+' 个小组');
+}
 function render(){
  const s=current(),t=s.team,ms=s.members||[],rs=s.records||[],u=s.user,r=role();
  const nav=(n,i)=>button(n,'nav:'+n,page===n?'selected':'',i);
- const roleName=u.teacher?'教师工作台':roles[r]||'学生工作台';
- app.innerHTML='<div class="layout"><aside class="left"><div class="brand"><span>'+I('logo',24)+'</span><div><b>研工坊</b><small>软件工程实践平台</small></div></div><div class="groupbox"><span class="groupicon">'+I('people',18)+'</span><div class="grow"><small>当前工作空间</small><b>'+E(t?.name||'课程实践')+'</b></div>'+(!demo()&&s.teams?.length>1?'<select id="team-switch" aria-label="切换小组">'+opts(s.teams.map(x=>[x.id,x.name]),t?.id)+'</select>':'')+'</div><nav><div class="navlabel">项目空间</div>'+nav('项目概览','home')+nav('任务看板','board')+nav('项目文档','file')+nav('小组与项目','people')+'<div class="navlabel rolelabel">'+roleName+'</div>'+
- (u.teacher?button('发布实践项目','project','','plus'):modules[Math.max(0,r)].map((n,i)=>nav(n,['target','board','check'][i])).join(''))+'</nav><div class="leftfoot">'+(demo()?select('demo-role','示例岗位',roles.map((n,i)=>[i,n]),demoRole):'')+'<div class="identity">'+person({name:u.name,role:Math.max(r,0)})+'<span class="grow"><b>'+E(u.name)+'</b><small>'+roleName+'</small></span>'+button(demo()?'登录':'退出',demo()?'login':'logout','link')+'</div></div></aside>'+
- '<div class="workspace"><header><div class="crumb">课程实践 <span> / </span> <b>'+E(page)+'</b></div><div class="head-actions">'+(demo()?'<span class="demo">示例工作空间</span>':'')+button('通知','tab:通知','headbutton','bell')+button(demo()?'进入我的工作台':u.teacher?'发布项目':'加入小组',demo()?'login':u.teacher?'project':'groups','primary','plus')+'</div></header>'+
- '<div class="bodygrid"><main>'+(t?(page==='项目概览'?overview(t,rs,ms,u):'<div class="pageintro"><h1>'+E(page)+'</h1><p>'+E(t.title)+' · '+E(t.name)+'</p></div>'+section(t,rs,ms)):'<section class="hero"><div class="hero-inner"><div class="hero-tag">软件工程课程实践</div><h1>'+E(u.name)+'，欢迎来到研工坊</h1><p>'+ (u.teacher?'发布课程实践项目后，可在此跟踪学生小组的项目进度。':'选择课程实践项目创建小组，或通过邀请码加入已有小组。')+'</p>'+button(u.teacher?'发布实践项目':'创建或加入小组',u.teacher?'project':'groups','primary','plus')+'</div></section>'+panel('已发布项目','<div class="projectlist">'+(s.projects||[]).map(p=>'<div><b>'+E(p.title)+'</b><p>'+E(p.body)+'</p></div>').join('')+'</div>'))+'</main>'+ (t?right(ms):'')+'</div></div></div>';
+ const roleName=u.admin?'管理员工作台':u.teacher?'教师工作台':roles[r]||'学生工作台';
+ app.innerHTML='<div class="layout"><aside class="left"><div class="brand"><span>'+I('logo',24)+'</span><div><b>'+platform+'</b></div></div><div class="groupbox"><span class="groupicon">'+I('people',18)+'</span><div class="grow"><small>当前工作空间</small><b>'+E(t?.name||'课程实践')+'</b></div>'+(!demo()&&s.teams?.length>1?'<select id="team-switch" aria-label="切换小组">'+opts(s.teams.map(x=>[x.id,x.name]),t?.id)+'</select>':'')+'</div><nav><div class="navlabel">项目空间</div>'+(u.admin?button('全部小组进展','team:0',!t?'selected':'','people'):'')+(!u.admin||t?nav('项目概览','home')+nav('任务看板','board')+nav('项目文档','file')+nav('小组与项目','people'):'')+'<div class="navlabel rolelabel">'+roleName+'</div>'+
+ (u.admin?'':u.teacher?button('发布实践项目','project','','plus'):modules[Math.max(0,r)].map((n,i)=>nav(n,['target','board','check'][i])).join(''))+'</nav><div class="leftfoot">'+(demo()?select('demo-role','示例岗位',roles.map((n,i)=>[i,n]),demoRole):'')+'<div class="identity">'+person({name:u.name,role:Math.max(r,0)})+'<span class="grow"><b>'+E(u.name)+'</b><small>'+roleName+'</small></span>'+button(demo()?'登录':'退出',demo()?'login':'logout','link')+'</div></div></aside>'+
+ '<div class="workspace"><header><div class="crumb">课程实践 <span> / </span> <b>'+E(u.admin&&!t?'全部小组进展':page)+'</b></div><div class="head-actions">'+(demo()?'<span class="demo">示例工作空间</span>':'')+(u.admin?button('退出登录','logout','headbutton'):button('通知','tab:通知','headbutton','bell')+button(demo()?'进入我的工作台':u.teacher?'发布项目':'加入小组',demo()?'login':u.teacher?'project':'groups','primary','plus'))+'</div></header>'+
+ '<div class="bodygrid"><main>'+(u.admin&&!t?adminOverview(s.teams||[]):t?(page==='项目概览'?overview(t,rs,ms,u):'<div class="pageintro"><h1>'+E(page)+'</h1><p>'+E(t.title)+' · '+E(t.name)+'</p></div>'+section(t,rs,ms)):'<section class="hero"><div class="hero-inner"><div class="hero-tag">软件工程课程实践</div><h1>'+E(u.name)+'，欢迎来到'+platform+'</h1><p>'+ (u.teacher?'发布课程实践项目后，可在此跟踪学生小组的项目进度。':'选择课程实践项目创建小组，或通过邀请码加入已有小组。')+'</p>'+button(u.teacher?'发布实践项目':'创建或加入小组',u.teacher?'project':'groups','primary','plus')+'</div></section>'+panel('已发布项目','<div class="projectlist">'+(s.projects||[]).map(p=>'<div><b>'+E(p.title)+'</b><p>'+E(p.body)+'</p></div>').join('')+'</div>'))+'</main>'+ (t&&!u.admin?right(ms):'')+'</div></div></div>';
  const switcher=document.querySelector('#team-switch');if(switcher)switcher.onchange=()=>{tid=Number(switcher.value);recipient='';aiReply='';page='项目概览';refresh(true).catch(e=>notify(e.message));};
  const ds=app.querySelector('[name="demo-role"]');if(ds)ds.onchange=()=>{demoRole=Number(ds.value);page='项目概览';aiReply='';render();};
  const chat=document.querySelector('#chat');if(chat){chat.upload.onchange=()=>notify(chat.upload.files[0]?.name||'');chat.onsubmit=async e=>{
@@ -264,6 +269,7 @@ document.addEventListener('click',async e=>{
  const [a,v,z]=b.dataset.action.split(':');
  try{
   if(a==='nav'){page=v;render();}
+  else if(a==='team'){tid=Number(v);page='项目概览';await refresh(true);}
   else if(a==='tab'){tab=v;render();}
   else if(a==='view'){taskView=v;render();}
   else if(a==='login')auth();

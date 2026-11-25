@@ -5,6 +5,8 @@ from urllib.parse import urlsplit, parse_qs
 
 ROOT=Path(__file__).parent
 DB=os.getenv('LAB_DB',str(ROOT/'lab.sqlite'))
+ADMIN_LOGIN='admin'
+ADMIN_NAME='王鸽'
 ROLES=['产品经理','需求人员','设计人员','开发人员','测试人员']
 MODULES=[
 ['产品规划','项目管理','产品评审与验收'],
@@ -31,11 +33,30 @@ with cx() as c:
     CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY,tid INT,uid INT,to_uid INT,body TEXT,file TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,tid INT,uid INT,body TEXT,created TEXT DEFAULT CURRENT_TIMESTAMP);
     """)
+    c.execute('BEGIN IMMEDIATE')
+    if 'admin' not in {col['name'] for col in c.execute('PRAGMA table_info(users)')}:
+        c.execute('ALTER TABLE users ADD COLUMN admin INTEGER NOT NULL DEFAULT 0')
+
 def rows(c,q,*a): return [dict(x) for x in c.execute(q,a)]
 def one(c,q,*a): return c.execute(q,a).fetchone()
 def require(test,msg='没有操作权限'):
     if not test: raise ValueError(msg)
 def password(p,s): return hashlib.pbkdf2_hmac('sha256',p.encode(),bytes.fromhex(s),310000).hex()
+def initialize_admin():
+    pw=os.getenv('LAB_ADMIN_PASSWORD','')
+    if not pw:
+        return
+    with cx() as c:
+        c.execute('BEGIN IMMEDIATE')
+        existing=one(c,'SELECT admin FROM users WHERE name=?',ADMIN_LOGIN)
+        if existing:
+            require(existing['admin'],'现有普通账号已占用 admin，请联系平台维护人员处理')
+            return
+        require(8<=len(pw)<=128,'管理员密码须为 8–128 位')
+        salt=secrets.token_hex(16)
+        c.execute('INSERT INTO users(name,pw,teacher,admin) VALUES(?,?,0,1)',
+                  (ADMIN_LOGIN,salt+':'+password(pw,salt)))
+
 def event(c,t,u,s): c.execute('INSERT INTO events(tid,uid,body) VALUES(?,?,?)',(t,u,s))
 class Handler(BaseHTTPRequestHandler):
     def answer(self,data,status=200,cookie=None):
@@ -120,6 +141,7 @@ class Handler(BaseHTTPRequestHandler):
             require(1<=len(name)<=40 and 8<=len(pw)<=128,'请输入用户名及 8–128 位密码')
             u=one(c,'SELECT * FROM users WHERE name=?',name)
             if a=='register':
+                require(name.casefold()!=ADMIN_LOGIN,'admin 是预留的管理员登录名')
                 require(not u,'用户名已存在')
                 teacher=int(bool(d.get('teacher')))
                 if teacher:
@@ -135,14 +157,16 @@ class Handler(BaseHTTPRequestHandler):
             t=secrets.token_urlsafe(32)
             c.execute('INSERT INTO sessions VALUES(?,?,?)',(t,uid,int(time.time())+604800))
             return {},'sid='+t+cookie+'; Max-Age=604800'
-        u=one(c,'SELECT users.id,name,teacher FROM users JOIN sessions ON uid=users.id WHERE token=? AND expires>?',token,int(time.time()))
+        u=one(c,'SELECT users.id,name,teacher,admin FROM users JOIN sessions ON uid=users.id WHERE token=? AND expires>?',token,int(time.time()))
         if not u and a=='state' and not post: return {'user':None},None
         require(u,'请先登录')
         uid=u['id']
         teacher=u['teacher']
+        admin=u['admin']
         if post and a=='logout':
             c.execute('DELETE FROM sessions WHERE token=?',(token,))
             return {},'sid='+cookie+'; Max-Age=0'
+        require(not (post and admin),'管理员工作台仅供查看')
         if post and a=='project':
             require(teacher)
             title=str(d['title']).strip()
@@ -169,16 +193,25 @@ class Handler(BaseHTTPRequestHandler):
             return {'tid':tid},None
         tid=int((d.get('tid') if post else q.get('tid',[0])[0]) or 0)
         scope='p.teacher=?' if teacher else 'EXISTS(SELECT 1 FROM members m WHERE m.tid=t.id AND m.uid=?)'
-        teams=rows(c,'SELECT t.*,p.title,p.body FROM teams t JOIN projects p ON t.pid=p.id WHERE '+scope+' ORDER BY t.id DESC',uid)
-        if not tid and teams: tid=teams[0]['id']
+        if admin:
+            teams=rows(c, """SELECT t.id,t.name,t.stage,t.archived,p.title,p.body,
+                (SELECT COUNT(*) FROM members WHERE tid=t.id) AS member_count,
+                (SELECT COUNT(*) FROM records WHERE tid=t.id AND kind='task') AS task_count,
+                (SELECT COUNT(*) FROM records WHERE tid=t.id AND kind='task' AND status='已完成') AS completed_tasks,
+                (SELECT COUNT(*) FROM records WHERE tid=t.id AND kind='artifact') AS artifact_count
+                FROM teams t JOIN projects p ON t.pid=p.id ORDER BY t.id DESC""")
+        else:
+            teams=rows(c,'SELECT t.*,p.title,p.body FROM teams t JOIN projects p ON t.pid=p.id WHERE '+scope+' ORDER BY t.id DESC',uid)
+        if not tid and teams and not admin: tid=teams[0]['id']
         team=next((t for t in teams if t['id']==tid),None)
         if not post and a=='state':
             out={'user':dict(u),'projects':rows(c,'SELECT id,title,body FROM projects WHERE teacher=?',uid) if teacher else rows(c,'SELECT id,title,body FROM projects'),'teams':teams,'team':team}
+            if admin: out['user']['name']=ADMIN_NAME
             if team:
                 out['members']=rows(c,'SELECT u.id,u.name,m.role FROM members m JOIN users u ON u.id=m.uid WHERE tid=? ORDER BY role',tid)
                 out['records']=rows(c,'SELECT * FROM records WHERE tid=? ORDER BY id DESC',tid)
                 out['events']=rows(c,'SELECT e.*,u.name FROM events e JOIN users u ON u.id=e.uid WHERE tid=? ORDER BY e.id DESC',tid)
-                out['messages']=rows(c,'SELECT m.*,u.name FROM messages m JOIN users u ON u.id=m.uid WHERE tid=? AND (to_uid IS NULL OR to_uid=? OR uid=?) ORDER BY m.id',tid,uid,uid)
+                out['messages']=[] if admin else rows(c,'SELECT m.*,u.name FROM messages m JOIN users u ON u.id=m.uid WHERE tid=? AND (to_uid IS NULL OR to_uid=? OR uid=?) ORDER BY m.id',tid,uid,uid)
             return out,None
         require(post and team)
         if a=='archive':
@@ -278,4 +311,10 @@ class Handler(BaseHTTPRequestHandler):
         else: raise ValueError('操作不存在')
         return {},None
 if __name__=='__main__':
-    ThreadingHTTPServer((os.getenv('LAB_HOST','0.0.0.0'),int(os.getenv('PORT','8080'))),Handler).serve_forever()
+    initialize_admin()
+    host=os.getenv('LAB_HOST','0.0.0.0')
+    port=int(os.getenv('PORT','8080'))
+    with ThreadingHTTPServer((host,port),Handler) as server:
+        local_host='127.0.0.1' if host=='0.0.0.0' else host
+        print(f'西安交通大学软小智课程平台已启动，请在浏览器访问 http://{local_host}:{server.server_port}',flush=True)
+        server.serve_forever()
